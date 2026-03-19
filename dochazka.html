@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <title>Školní RFID Prezence terminál</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #e9ecef;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        
+        .terminal {
+            background-color: white;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+
+        h1 { color: #333; margin-top: 0; }
+        
+        #hodiny {
+            font-size: 60px;
+            font-weight: bold;
+            color: #007BFF;
+            font-family: 'Courier New', Courier, monospace;
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 10px;
+            border: 2px solid #dee2e6;
+            display: inline-block;
+            margin: 20px 0;
+            letter-spacing: 2px;
+        }
+
+        #rfid-input {
+            padding: 15px;
+            font-size: 20px;
+            width: 80%;
+            max-width: 300px;
+            border: 3px solid #007BFF;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 30px;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+        #rfid-input:focus { 
+            box-shadow: 0 0 15px rgba(0, 123, 255, 0.4); 
+            border-color: #0056b3;
+        }
+
+        table {
+            margin: 0 auto;
+            border-collapse: collapse;
+            width: 100%;
+            background-color: white;
+        }
+        th, td {
+            border-bottom: 1px solid #ddd;
+            padding: 12px;
+            font-size: 18px;
+            text-align: left;
+        }
+        th { background-color: #343a40; color: white; }
+        
+        .prichod { color: #28a745; font-weight: bold; }
+        .odchod { color: #dc3545; font-weight: bold; }
+        
+        /* Obal pro tlačítka */
+        .tlacitka {
+            margin-top: 30px;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+        }
+
+        button {
+            padding: 10px 20px;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.2s;
+        }
+        
+        .btn-smazat { background-color: #dc3545; }
+        .btn-smazat:hover { background-color: #c82333; }
+        
+        .btn-export { background-color: #28a745; }
+        .btn-export:hover { background-color: #218838; }
+    </style>
+</head>
+<body>
+
+    <div class="terminal">
+        <h1>Elektronická docházka</h1>
+        
+        <div id="hodiny">00:00:00</div>
+        
+        <p>Přiložte kartu ke čtečce (čtečka musí psát do tohoto políčka):</p>
+        <input type="text" id="rfid-input" placeholder="Přiložte čip..." autofocus autocomplete="off">
+
+        <h2>Dnešní záznamy</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Čas</th>
+                    <th>ID Karty</th>
+                    <th>Jméno</th>
+                    <th>Akce</th>
+                </tr>
+            </thead>
+            <tbody id="log-table">
+                </tbody>
+        </table>
+
+        <div class="tlacitka">
+            <button class="btn-smazat" onclick="vymazatPamet()">Vymazat historii</button>
+            <button class="btn-export" onclick="exportDoExcel()">Exportovat do Excelu</button>
+        </div>
+    </div>
+
+    <script>
+        // --- LOGIKA HODIN ---
+        function aktualizujHodiny() {
+            const nyni = new Date();
+            const casText = nyni.toLocaleTimeString('cs-CZ');
+            document.getElementById('hodiny').textContent = casText;
+        }
+        aktualizujHodiny();
+        setInterval(aktualizujHodiny, 1000);
+
+        // --- LOGIKA DOCHÁZKY ---
+        const uzivatele = {
+            "ééé+ířřřéý": "Jan Novák",
+            "0009876543": "Eva Svobodová",
+            "1112223334": "Petr Dvořák"
+        };
+
+        const inputPolicko = document.getElementById('rfid-input');
+        const tabulkaLogu = document.getElementById('log-table');
+
+        let prihlaseni = JSON.parse(localStorage.getItem('stavPrihlaseni')) || {};
+        let historieLogu = JSON.parse(localStorage.getItem('historieZaznamu')) || [];
+
+        function vykresliTabulku() {
+            tabulkaLogu.innerHTML = '';
+            historieLogu.forEach(zaznam => {
+                tabulkaLogu.innerHTML += `
+                    <tr>
+                        <td>${zaznam.cas}</td>
+                        <td>${zaznam.id}</td>
+                        <td>${zaznam.jmeno}</td>
+                        <td class="${zaznam.cssTrida}">${zaznam.akce}</td>
+                    </tr>
+                `;
+            });
+        }
+
+        vykresliTabulku();
+
+        document.addEventListener('click', (udalost) => {
+            if (udalost.target.tagName !== 'BUTTON') {
+                inputPolicko.focus();
+            }
+        });
+
+        inputPolicko.addEventListener('keydown', function(udalost) {
+            if (udalost.key === 'Enter') {
+                const idKarty = this.value.trim();
+                this.value = '';
+
+                if (idKarty === "") return;
+
+                if (uzivatele[idKarty]) {
+                    const jmeno = uzivatele[idKarty];
+                    const nyni = new Date();
+                    const cas = nyni.toLocaleTimeString('cs-CZ');
+
+                    let akce, cssTrida;
+
+                    if (prihlaseni[idKarty]) {
+                        akce = "Odchod";
+                        cssTrida = "odchod";
+                        delete prihlaseni[idKarty];
+                    } else {
+                        akce = "Příchod";
+                        cssTrida = "prichod";
+                        prihlaseni[idKarty] = true;
+                    }
+
+                    const novyZaznam = { cas: cas, id: idKarty, jmeno: jmeno, akce: akce, cssTrida: cssTrida };
+                    historieLogu.unshift(novyZaznam);
+
+                    localStorage.setItem('stavPrihlaseni', JSON.stringify(prihlaseni));
+                    localStorage.setItem('historieZaznamu', JSON.stringify(historieLogu));
+
+                    vykresliTabulku();
+                } else {
+                    alert("Neznámá karta s ID: " + idKarty);
+                }
+            }
+        });
+
+        // --- MAZÁNÍ PAMĚTI ---
+        function vymazatPamet() {
+            if (confirm("Opravdu chceš vymazat celou historii docházky?")) {
+                localStorage.removeItem('stavPrihlaseni');
+                localStorage.removeItem('historieZaznamu');
+                prihlaseni = {};
+                historieLogu = [];
+                vykresliTabulku();
+                inputPolicko.focus();
+            }
+        }
+
+        // --- EXPORT DO EXCELU (CSV) ---
+        function exportDoExcel() {
+            if (historieLogu.length === 0) {
+                alert("Není co exportovat, tabulka je prázdná.");
+                return;
+            }
+
+            // Přidáme tzv. BOM (Byte Order Mark), aby Excel správně pochopil českou diakritiku (UTF-8)
+            let csvObsah = "\uFEFF";
+            
+            // Hlavička (používáme středník, český Excel ho používá jako oddělovač sloupců)
+            csvObsah += "Čas;ID Karty;Jméno;Akce\n";
+
+            // Projdeme historii a naskládáme ji do textu
+            historieLogu.forEach(zaznam => {
+                csvObsah += `${zaznam.cas};${zaznam.id};${zaznam.jmeno};${zaznam.akce}\n`;
+            });
+
+            // Vytvoříme virtuální soubor
+            const blob = new Blob([csvObsah], { type: 'text/csv;charset=utf-8;' });
+            const odkaz = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            odkaz.setAttribute("href", url);
+            odkaz.setAttribute("download", "dochazka_export.csv");
+            document.body.appendChild(odkaz);
+            odkaz.click();
+            document.body.removeChild(odkaz);
+            inputPolicko.focus();
+        }
+    </script>
+</body>
+</html>
